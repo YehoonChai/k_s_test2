@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+
+<head>
+	<meta name="viewport"
+		content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
+	<meta charset="utf-8" />
+	<title>PlayCanvas Loader</title>
+	<style>
+		html,
+		body {
+			width: 100%;
+			height: 100%;
+			margin: 0;
+			padding: 0;
+			/* 기존 __loading__.js 스플래시(흰 배경)가 바로 보이도록 기본 배경을 흰색으로 */
+			background: #fff;
+			overflow: hidden;
+		}
+
+		/* 디버그용 오버레이는 완전히 숨김(검정색 깔리는 것 방지) */
+		#pc-loader-status {
+			display: none !important;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="pc-loader-status" aria-hidden="true"></div>
+	<script>
+		(function () {
+			function fail(msg, err) {
+				try {
+					console.error("[playcanvas-loader]", msg, err || "");
+				} catch (_) { }
+			}
+
+			function getBaseParam() {
+				// 1) query ?base=...
+				var usp = new URLSearchParams(location.search);
+				var raw = usp.get("base");
+				if (raw != null && raw !== "") return raw;
+
+				// 2) hash #base=...
+				var h = location.hash || "";
+				if (h.startsWith("#")) h = h.slice(1);
+				var usp2 = new URLSearchParams(h);
+				return usp2.get("base") || "";
+			}
+
+			function normalizeBase(raw) {
+				if (!raw) return "";
+				var u;
+				try {
+					u = new URL(raw, document.baseURI);
+				} catch (_) {
+					try {
+						u = new URL(encodeURI(raw), document.baseURI);
+					} catch (__) {
+						try {
+							u = new URL(decodeURIComponent(raw), document.baseURI);
+						} catch (___) {
+							return "";
+						}
+					}
+				}
+				var href = u.href;
+				if (!href.endsWith("/")) href += "/";
+				return href;
+			}
+
+			function injectLink(rel, href) {
+				var link = document.createElement("link");
+				link.rel = rel;
+				link.href = href;
+				document.head.appendChild(link);
+				return link;
+			}
+
+			function loadScript(src) {
+				return new Promise(function (resolve, reject) {
+					var s = document.createElement("script");
+					s.src = src;
+					s.async = false;
+					s.onerror = function () {
+						fail("Failed to load script: " + src, new Error(src));
+						reject(new Error("Script load failed: " + src));
+					};
+					s.onload = function () {
+						resolve();
+					};
+					document.body.appendChild(s);
+				});
+			}
+
+			function patchSettings(base) {
+				try {
+					window.ASSET_PREFIX = base;
+					window.SCRIPT_PREFIX = base;
+					if (typeof window.CONFIG_FILENAME === "string") {
+						window.CONFIG_FILENAME =
+							base + window.CONFIG_FILENAME.replace(/^\//, "");
+					}
+					if (typeof window.SCENE_PATH === "string") {
+						window.SCENE_PATH =
+							base + window.SCENE_PATH.replace(/^\//, "");
+					}
+				} catch (_) { }
+			}
+
+			var rawBase = getBaseParam();
+			var base = normalizeBase(rawBase);
+			if (!base) {
+				fail("Missing or invalid base parameter. rawBase=" + String(rawBase || ""));
+				return;
+			}
+
+			// PlayCanvas exported index.html loading order:
+			// head: styles/manifest + playcanvas + settings
+			try {
+				injectLink("stylesheet", base + "styles.css");
+				injectLink("manifest", base + "manifest.json");
+			} catch (_) { }
+
+			loadScript(base + "playcanvas-stable.min.js")
+				.then(function () {
+					return loadScript(base + "__settings__.js");
+				})
+				.then(function () {
+					patchSettings(base);
+					return loadScript(base + "__modules__.js");
+				})
+				.then(function () {
+					return loadScript(base + "__start__.js");
+				})
+				.then(function () {
+					return loadScript(base + "__loading__.js");
+				})
+				.catch(function (e) {
+					fail("Failed to load 3D viewer.", e);
+				});
+		})();
+	</script>
+</body>
+
+</html>
