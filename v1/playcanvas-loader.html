@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+
+<head>
+	<meta name="viewport"
+		content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
+	<meta charset="utf-8" />
+	<title>PlayCanvas Loader</title>
+	<style>
+		html,
+		body {
+			width: 100%;
+			height: 100%;
+			margin: 0;
+			padding: 0;
+			background: #000;
+			overflow: hidden;
+		}
+
+		#pc-loader-status {
+			position: fixed;
+			inset: 0;
+			z-index: 2147483647;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			background: rgba(0, 0, 0, 0.35);
+			color: rgba(255, 255, 255, 0.9);
+			pointer-events: none;
+			white-space: pre-line;
+			text-align: center;
+			padding: 24px;
+			box-sizing: border-box;
+		}
+
+		#pc-loader-status::before {
+			content: "";
+			width: 42px;
+			height: 42px;
+			border-radius: 50%;
+			border: 4px solid rgba(255, 255, 255, 0.18);
+			border-top-color: rgba(255, 255, 255, 0.8);
+			animation: pcSpin 0.8s linear infinite;
+		}
+
+		@keyframes pcSpin {
+			from {
+				transform: rotate(0deg);
+			}
+
+			to {
+				transform: rotate(360deg);
+			}
+		}
+	</style>
+</head>
+
+<body>
+	<div id="pc-loader-status" aria-hidden="true"></div>
+	<script>
+		(function () {
+			function setStatus(msg) {
+				// no-op: __loading__.js UI만 표시
+			}
+			function fail(msg, err) {
+				var detail = "";
+				try {
+					if (err && err.message) detail = "\n\n" + String(err.message);
+				} catch (_) { }
+				try {
+					console.error("[playcanvas-loader] ", msg, err || "", detail);
+				} catch (_) { }
+			}
+			function getBaseParam() {
+				var usp = new URLSearchParams(location.search);
+				var raw = usp.get("base") || "";
+				return raw;
+			}
+			function normalizeBase(raw) {
+				if (!raw) return "";
+				// Allow relative base (e.g. "./v1/3d-assets/KLTV/") and absolute base.
+				var u;
+				try {
+					u = new URL(raw, document.baseURI);
+				} catch (_) {
+					return "";
+				}
+				var href = u.href;
+				if (!href.endsWith("/")) href += "/";
+				return href;
+			}
+			function injectLink(rel, href) {
+				var link = document.createElement("link");
+				link.rel = rel;
+				link.href = href;
+				document.head.appendChild(link);
+				return link;
+			}
+			function loadScript(src) {
+				return new Promise(function (resolve, reject) {
+					var s = document.createElement("script");
+					s.src = src;
+					s.async = false;
+					// no-op: __loading__.js UI만 표시
+					// Best-effort early detection for SPA fallback returning HTML.
+					try {
+						fetch(src, { method: "HEAD", cache: "no-store" }).catch(function () { });
+					} catch (_) { }
+
+					s.onerror = function () {
+						fail("Failed to load script (or wrong MIME type).", new Error(src));
+						reject(new Error("Script load failed: " + src));
+					};
+					s.onload = function () {
+						resolve();
+					};
+					document.body.appendChild(s);
+				});
+			}
+			function patchSettings(base) {
+				// Keep original behaviour of PlayCanvas templates while moving HTML out of the asset folder.
+				try {
+					if (typeof window.ASSET_PREFIX === "string") window.ASSET_PREFIX = base;
+					else window.ASSET_PREFIX = base;
+					if (typeof window.SCRIPT_PREFIX === "string") window.SCRIPT_PREFIX = base;
+					else window.SCRIPT_PREFIX = base;
+					if (typeof window.CONFIG_FILENAME === "string") {
+						window.CONFIG_FILENAME = base + window.CONFIG_FILENAME.replace(/^\//, "");
+					}
+					if (typeof window.SCENE_PATH === "string") {
+						window.SCENE_PATH = base + window.SCENE_PATH.replace(/^\//, "");
+					}
+				} catch (_) { }
+			}
+
+			var rawBase = getBaseParam();
+			var base = normalizeBase(rawBase);
+			if (!base) {
+				fail(
+					"Missing or invalid base parameter.\n\nExpected: ?base=<3d-asset-folder-url>\n\nrawBase=" +
+					String(rawBase)
+				);
+				return;
+			}
+			setStatus("base=" + base + "\nnext=playcanvas-stable.min.js");
+
+			// Mirror PlayCanvas exported index.html loading order.
+			// head: styles/manifest + playcanvas + settings
+			try {
+				injectLink("stylesheet", base + "styles.css");
+				injectLink("manifest", base + "manifest.json");
+			} catch (_) { }
+
+			setStatus("Loading 3D viewer…");
+			loadScript(base + "playcanvas-stable.min.js")
+				.then(function () {
+					return loadScript(base + "__settings__.js");
+				})
+				.then(function () {
+					patchSettings(base);
+					return loadScript(base + "__modules__.js");
+				})
+				.then(function () {
+					return loadScript(base + "__start__.js");
+				})
+				.then(function () {
+					return loadScript(base + "__loading__.js");
+				})
+				.then(function () {
+					// scripts loaded: keep spinner until PlayCanvas splash is gone
+					(function autoHideSpinner() {
+						var startTs = Date.now();
+						var el = document.getElementById("pc-loader-status");
+						var tick = setInterval(function () {
+							var splash = document.getElementById("application-splash-wrapper");
+							var canvas = document.getElementById("application-canvas");
+							// var elapsed = Date.now() - startTs;
+							if (!el) {
+								clearInterval(tick);
+								return;
+							}
+							if (!splash || canvas) {
+								clearInterval(tick);
+								if (el && el.parentNode) el.parentNode.removeChild(el);
+							}
+						}, 120);
+					})();
+				})
+				.catch(function (e) {
+					fail("Failed to load 3D viewer.", e);
+				});
+		})();
+	</script>
+</body>
+
+</html>
